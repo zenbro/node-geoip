@@ -2,10 +2,6 @@
 
 'use strict';
 
-if(!process.env.npm_package_config_update){
-	return;
-}
-
 var cp = require('child_process');
 var fs = require('fs');
 var http = require('http');
@@ -28,16 +24,6 @@ var dataPath = path.join(__dirname, '..', 'data');
 var tmpPath = path.join(__dirname, '..', 'tmp');
 
 var databases = [{
-	type: 'country',
-	url: 'http://geolite.maxmind.com/download/geoip/database/GeoIPCountryCSV.zip',
-	src: 'GeoIPCountryWhois.csv',
-	dest: 'geoip-country.dat'
-},{
-	type: 'country',
-	url: 'http://geolite.maxmind.com/download/geoip/database/GeoIPv6.csv.gz',
-	src: 'GeoIPv6.csv',
-	dest: 'geoip-country6.dat'
-},{
 	type: 'city-extended',
 	url: 'http://geolite.maxmind.com/download/geoip/database/GeoLiteCity_CSV/GeoLiteCity-latest.zip',
 	src: [
@@ -48,11 +34,6 @@ var databases = [{
 		'geoip-city.dat',
 		'geoip-city-names.dat'
 	]
-},{
-	type: 'city',
-	url: 'http://geolite.maxmind.com/download/geoip/database/GeoLiteCityv6-beta/GeoLiteCityv6.csv.gz',
-	src: 'GeoLiteCityv6.csv',
-	dest: 'geoip-city6.dat'
 }];
 
 function mkdir(name) {
@@ -173,83 +154,6 @@ function extract(tmpFile, tmpFileName, cb) {
 	}
 }
 
-function processCountryData(src, dest, cb) {
-	var lines=0;
-	function processLine(line) {
-		var fields = CSVtoArray(line);
-
-		if (fields.length < 6) {
-			console.log("weird line: %s::", line);
-			return;
-		}
-		lines++;
-
-		var sip;
-		var eip;
-		var cc = fields[4].replace(/"/g, '');
-		var b;
-		var bsz;
-		var i;
-
-		if (fields[0].match(/:/)) {
-			// IPv6
-			bsz = 34;
-			sip = utils.aton6(fields[0]);
-			eip = utils.aton6(fields[1]);
-
-			b = new Buffer(bsz);
-			for (i = 0; i < sip.length; i++) {
-				b.writeUInt32BE(sip[i], i * 4);
-			}
-
-			for (i = 0; i < eip.length; i++) {
-				b.writeUInt32BE(eip[i], 16 + (i * 4));
-			}
-		} else {
-			// IPv4
-			bsz = 10;
-
-			sip = parseInt(fields[2].replace(/"/g, ''), 10);
-			eip = parseInt(fields[3].replace(/"/g, ''), 10);
-
-			b = new Buffer(bsz);
-			b.fill(0);
-			b.writeUInt32BE(sip, 0);
-			b.writeUInt32BE(eip, 4);
-		}
-
-		b.write(cc, bsz - 2);
-
-		fs.writeSync(datFile, b, 0, bsz, null);
-		if(Date.now() - tstart > 5000) {
-			tstart = Date.now();
-			process.stdout.write('\nStill working (' + lines + ') ...');
-		}
-	}
-
-	var dataFile = path.join(dataPath, dest);
-	var tmpDataFile = path.join(tmpPath, src);
-
-	rimraf(dataFile);
-	mkdir(dataFile);
-
-	process.stdout.write('Processing Data (may take a moment) ...');
-	var tstart = Date.now();
-	var datFile = fs.openSync(dataFile, "w");
-
-	lazy(fs.createReadStream(tmpDataFile))
-		.lines
-		.map(function(byteArray) {
-			return iconv.decode(byteArray, 'latin1');
-		})
-		.skip(1)
-		.map(processLine)
-		.on('pipe', function() {
-			console.log(' DONE'.green);
-			cb();
-		});
-}
-
 function processCityData(src, dest, cb) {
 	var lines = 0;
 	function processLine(line) {
@@ -353,9 +257,8 @@ function processCityDataNames(src, dest, cb) {
 		var city = fields[3];
 		var lat = Math.round(parseFloat(fields[5]) * 10000);
 		var lon = Math.round(parseFloat(fields[6]) * 10000);
-		var metro = parseInt(fields[7]);
 		var b;
-		var sz = 64;
+		var sz = 32;
 
 		b = new Buffer(sz);
 		b.fill(0);
@@ -364,7 +267,6 @@ function processCityDataNames(src, dest, cb) {
 		b.writeInt32BE(lat, 4);
 		b.writeInt32BE(lon, 8);
 		b.write(city, 12);
-		b.writeInt32BE(metro, 32);
 
 		fs.writeSync(datFile, b, 0, b.length, null);
 	}
@@ -387,9 +289,7 @@ function processCityDataNames(src, dest, cb) {
 }
 
 function processData(type, src, dest, cb) {
-	if (type === 'country') {
-		processCountryData(src, dest, cb);
-	} else if (type === 'city-extended') {
+	if (type === 'city-extended') {
 		processCityData(src[0], dest[0], function() {
 			processCityDataNames(src[1], dest[1], function() {
 				console.log(' DONE'.green);
